@@ -44,7 +44,6 @@ import warnings
 
 logger = logging.getLogger(__name__)
 
-SAST = pytz.timezone("Africa/Johannesburg")
 
 def strip_filter(value):
     if value is not None and hasattr(value, "strip"):
@@ -554,12 +553,9 @@ class EventView(ViewWithFiles, MyModelView):
 
     form_excluded_columns = ("type",)
     column_exclude_list = ("type",)
-    column_formatters = {"date": lambda v, c, model, n: model.date.astimezone(SAST)}
 
     def on_form_prefill(self, form, id):
         super().on_form_prefill(form, id)
-        # Display date in South African time
-        form.date.data = form.date.object_data.astimezone(SAST)
 
     def __init__(self, model, session, **kwargs):
         self.type = kwargs.pop("type")
@@ -569,9 +565,6 @@ class EventView(ViewWithFiles, MyModelView):
         if is_created:
             # set some default values when creating a new record
             model.type = self.type
-        # make sure the new date is timezone aware
-        if model.date:
-            model.date = model.date.replace(tzinfo=SAST)
 
         model.autolink_bills()
 
@@ -653,6 +646,7 @@ class CommitteeMeetingView(EventView):
     column_list = ("date", "title", "committee", "featured")
     column_labels = {
         "committee": "Committee",
+        "linked_petitions": "Petitions"
     }
     column_sortable_list = (
         "date",
@@ -670,6 +664,7 @@ class CommitteeMeetingView(EventView):
         "featured",
         "public_participation",
         "bills",
+        "linked_petitions", 
         "summary",
         "body",
         "files",
@@ -694,18 +689,14 @@ class CommitteeMeetingView(EventView):
         "body": {"class": "pmg_ckeditor"},
         "summary": {"class": "pmg_ckeditor"},
     }
-    form_ajax_refs = {"bills": {"fields": ("title",), "page_size": 50}}
+    form_ajax_refs = {
+        "bills": {"fields": ("title",), "page_size": 50},
+        "linked_petitions": {"fields": ("title",), "page_size": 50}  # Changed name here too
+    }
     inline_models = [
         InlineFile(EventFile),
         InlineCommitteeMeetingAttendance(CommitteeMeetingAttendance),
     ]
-
-    def on_model_change(self, form, model, is_created):
-        super(CommitteeMeetingView, self).on_model_change(form, model, is_created)
-        # make sure the new times are timezone aware
-        for attr in ["actual_start_time", "actual_end_time"]:
-            if getattr(model, attr):
-                setattr(model, attr, getattr(model, attr).replace(tzinfo=SAST))
 
 
 class HansardView(EventView):
@@ -714,6 +705,9 @@ class HansardView(EventView):
         "title",
         "date",
     )
+    column_labels = {
+        "linked_petitions": "Petitions"
+    }
     column_sortable_list = (
         "title",
         "house",
@@ -726,6 +720,7 @@ class HansardView(EventView):
         "house",
         "title",
         "bills",
+        "linked_petitions",
         "body",
         "files",
     )
@@ -735,7 +730,10 @@ class HansardView(EventView):
     form_widget_args = {
         "body": {"class": "pmg_ckeditor"},
     }
-    form_ajax_refs = {"bills": {"fields": ("title",), "page_size": 50}}
+    form_ajax_refs = {
+        "bills": {"fields": ("title",), "page_size": 50},
+        "linked_petitions": {"fields": ("title",), "page_size": 50}
+    }
     inline_models = [InlineFile(EventFile)]
 
 
@@ -1216,10 +1214,6 @@ class InlineBillEventsForm(InlineFormAdmin):
         "member": {"fields": ("name",), "page_size": 25},
     }
 
-    def on_model_change(self, form, model):
-        # make sure the new date is timezone aware
-        model.date = model.date.replace(tzinfo=SAST)
-
 
 class InlineBillVersionForm(InlineFormAdmin):
     form_columns = (
@@ -1260,6 +1254,20 @@ class BillHouseAjaxModelLoader(QueryAjaxModelLoader):
 
         return query.offset(offset).limit(limit).all()
 
+class InlineBillFileForm(InlineFormAdmin):
+    
+    form_columns = (
+        "id",
+        "file",
+    )
+    form_ajax_refs = {
+        "file": {
+            "fields": ("title", "file_path"),
+            "page_size": 10,
+            "placeholder": 'Select a File',
+        },
+    }
+
 
 class BillsView(MyModelView):
     column_list = (
@@ -1289,15 +1297,17 @@ class BillsView(MyModelView):
         "date_of_assent",
         "effective_date",
         "act_name",
-        "versions",
+        "versions"
     )
     column_default_sort = ("year", True)
     column_searchable_list = ("title",)
     inline_models = [
         InlineBillEventsForm(Event),
         InlineBillVersionForm(BillVersion),
+        InlineBillFileForm(BillFile),
     ]
     form_args = {
+        
         "events": {"widget": widgets.InlineBillEventsWidget()},
     }
 
@@ -1310,9 +1320,7 @@ class MinisterView(MyModelView):
 
 
 class FeaturedContentView(MyModelView):
-    def on_model_change(self, form, model, is_created):
-        # make sure the new date is timezone aware
-        model.start_date = model.start_date.replace(tzinfo=SAST)
+    column_list = ("title",)
 
 
 class FileView(MyModelView):
@@ -1424,11 +1432,6 @@ class PageView(ViewWithFiles, MyModelView):
         super(PageView, self).on_form_prefill(form, id)
         form.path.data = "/page/%s" % form.slug.data
 
-    def on_model_change(self, form, model, is_created):
-        # make sure the new date is timezone aware
-        if model.date:
-            model.date = model.date.replace(tzinfo=SAST)
-
 
 class PostView(ViewWithFiles, MyModelView):
     column_list = ("slug", "title", "date")
@@ -1458,13 +1461,56 @@ class PostView(ViewWithFiles, MyModelView):
         super(PostView, self).on_form_prefill(form, id)
         form.path.data = "/blog/%s" % form.slug.data
 
-    def on_model_change(self, form, model, is_created):
-        # make sure the new date is timezone aware
-        if model.date:
-            model.date = model.date.replace(tzinfo=SAST)
 
+class PetitionView(MyModelView):
+    form_columns = (
+        "title",
+        "issue",
+        "description",
+        "petitioner",
+        "house",
+        "date",
+        "committees", 
+        "hansard",
+        "report",
+        "status"
+    )
+    
+    form_ajax_refs = {
+        "status": {
+            "fields": ("name", "description"),
+            "page_size": 25,
+        },
+        "report": {
+            "fields": ("title", "file_path"),
+            "page_size": 20,
+            "placeholder": "Search for a file..."
+        },
+        "hansard": {
+            "fields": ("title", "date"),
+            "page_size": 20,
+            "placeholder": "Search for a hansard..."
+        }
+    }
+    
+    column_list = (
+        "title",
+        "date", 
+        "house",
+        "status"
+    )
+    
+    column_formatters = {
+        "committees": lambda v, c, m, n: ", ".join([committee.name for committee in m.committees])
+    }
 
-# initialise admin instance
+class PetitionStatusView(MyModelView):
+    column_default_sort = "name"
+    column_list = ("name", "description")
+    form_columns = column_list
+    edit_modal = True
+    create_modal = True
+
 admin = Admin(
     app,
     name="PMG-CMS",
@@ -1713,3 +1759,30 @@ with warnings.catch_warnings():
     admin.add_view(
         SubscriptionsView(category="Reports", name="Alert Counts", endpoint="subscriptions")
     )
+
+    # ---------------------------------------------------------------------------------
+    # Petitions
+    admin.add_view(
+        PetitionView(
+            Petition,
+            db.session,
+            name="Petitions",
+            endpoint="petition",
+            category="Other Content",  
+        )
+    )
+
+    admin.add_view(
+        PetitionStatusView(
+            PetitionStatus,
+            db.session,
+            name="Petition Statuses",
+            endpoint="petition-status",
+            category="Other Content",
+        )
+    )
+
+
+
+
+    

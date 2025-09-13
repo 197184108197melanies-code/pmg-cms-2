@@ -163,6 +163,7 @@ class Bill(ApiResource, db.Model):
     versions = db.relationship(
         "BillVersion", backref="bill", cascade="all, delete, delete-orphan"
     )
+    bill_files = db.relationship("BillFile", back_populates="bill", cascade="all, delete-orphan")
 
     @property
     def code(self):
@@ -223,6 +224,15 @@ class BillVersion(db.Model):
     enacted = db.Column(
         db.Boolean, default=False, server_default=sql.expression.false(), nullable=False
     )
+
+class BillFile(db.Model):
+    __tablename__ = 'bill_file'
+    id = db.Column(db.Integer, primary_key=True)
+    bill_id = db.Column(db.Integer, db.ForeignKey('bill.id'), nullable=False)
+    file_id = db.Column(db.Integer, db.ForeignKey('file.id'), nullable=False)
+
+    bill = db.relationship("Bill", back_populates="bill_files")
+    file = db.relationship("File")
 
 
 class File(db.Model):
@@ -385,6 +395,14 @@ class Event(ApiResource, db.Model):
         backref=backref("events"),
         cascade="save-update, merge",
     )
+
+    linked_petitions = db.relationship(
+        "Petition",
+        secondary="event_petitions", 
+        backref=backref("linked_events"),
+        cascade="save-update, merge",
+    )
+    
     chairperson = db.Column(db.String(256))
 
     # did this meeting involve public participation?
@@ -454,6 +472,12 @@ event_bills = db.Table(
     "event_bills",
     db.Column("event_id", db.Integer(), db.ForeignKey("event.id", ondelete="CASCADE")),
     db.Column("bill_id", db.Integer(), db.ForeignKey("bill.id", ondelete="CASCADE")),
+)
+
+event_petitions = db.Table(
+    "event_petitions",
+    db.Column("event_id", db.Integer(), db.ForeignKey("event.id", ondelete="CASCADE")),
+    db.Column("petition_id", db.Integer(), db.ForeignKey("petition.id", ondelete="CASCADE")),
 )
 
 
@@ -1705,7 +1729,57 @@ class Minister(ApiResource, db.Model):
                     best = (cte, score)
 
         return best[0] if best else None
+    
 
+petition_committee_join = db.Table(
+    "petition_committee_join",
+    db.Column("petition_id", db.Integer, db.ForeignKey("petition.id", ondelete="CASCADE")),
+    db.Column("committee_id", db.Integer, db.ForeignKey("committee.id", ondelete="CASCADE"))
+)
+
+class Petition(ApiResource, db.Model):
+    __tablename__ = "petition"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    date = db.Column(db.Date(), nullable=False)
+    house_id = db.Column(db.Integer, db.ForeignKey("house.id"))
+    house = db.relationship("House", lazy="joined")
+    
+    committees = db.relationship(
+        "Committee",
+        secondary=petition_committee_join,
+        backref=backref("petitions", lazy="dynamic"),
+        lazy="joined"
+    )
+    
+    issue = db.Column(db.String(255))
+    description = db.Column(db.Text())
+    petitioner = db.Column(db.String(255))
+    report_id = db.Column(db.Integer, db.ForeignKey("file.id"))
+    report = db.relationship("File", foreign_keys=[report_id])
+    hansard_id = db.Column(db.Integer, db.ForeignKey("event.id"))
+    hansard = db.relationship(
+        "Hansard", 
+        foreign_keys=[hansard_id], 
+        primaryjoin="Petition.hansard_id==Event.id"
+    )
+    status_id = db.Column(db.Integer, db.ForeignKey("petition_status.id"))
+    status = db.relationship("PetitionStatus", lazy="joined")
+   
+    def __str__(self):
+        return f"{self.title} ({self.date.strftime('%Y-%m-%d') if self.date else 'No date'})"
+    
+class PetitionStatus(db.Model):
+
+    __tablename__ = "petition_status"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    description = db.Column(db.Text)
+   
+    def __str__(self):
+        return "%s (%s)" % (self.description, self.name) 
+ 
 
 # Listen for model updates
 @models_committed.connect_via(app)
@@ -1757,3 +1831,4 @@ ApiResource.register(PolicyDocument)
 ApiResource.register(QuestionReply)
 ApiResource.register(TabledCommitteeReport)
 ApiResource.register(CommitteeMeetingAttendance)
+ApiResource.register(Petition)

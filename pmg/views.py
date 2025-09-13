@@ -41,6 +41,7 @@ from pmg.models import (
     CommitteeMeeting,
     CommitteeMeetingAttendance,
     House,
+    Petition
 )
 from pmg.models.resources import Committee
 
@@ -433,6 +434,23 @@ def committee_detail(committee_id):
     else:
         attendance_rank = None
 
+    cte = Committee.query.get(committee_id)
+    if cte:
+        committee_petitions = []
+        for petition in cte.petitions.all():
+            petition_data = {
+                'id': petition.id,
+                'title': petition.title,
+                'date': petition.date.isoformat() if petition.date else None,
+                'issue': petition.issue,
+                'status': {'name': petition.status.name} if petition.status else None
+            }
+            committee_petitions.append(petition_data)
+        
+        committee['petitions'] = committee_petitions
+    else:
+        committee['petitions'] = []
+
     bills = load_from_api(
         "v2/committees/%s/bills" % committee_id,
         fields=["id", "title", "status", "date_of_introduction", "code"],
@@ -459,7 +477,7 @@ def committee_detail(committee_id):
         attendance_rank=attendance_rank,
         admin_edit_url=admin_url("committee", committee_id),
         bills=bills,
-        from_page=from_page,
+        from_page=from_page
     )
 
 
@@ -1949,6 +1967,63 @@ def blog_post(slug):
         admin_edit_url=admin_url("posts", post.id),
         social_summary=social_summary,
         social_image=social_image,
+    )
+
+@app.route("/petitions/")
+def petitions_home(): 
+    return render_template("petitions/index.html")
+
+@app.route("/petitions/all/")
+@app.route("/petitions/current/")
+def petitions(page=0):
+    per_page = 1000
+    query = Petition.query.order_by(Petition.date.desc())
+    count = query.count()
+    petitions = query.offset(page * per_page).limit(per_page).all()
+    num_pages = int(math.ceil(float(count) / float(per_page)))
+    url = "/petitions"
+    return render_template(
+        "petitions/list.html",   
+        results=petitions,
+        num_pages=num_pages,
+        page=page,
+        url=url,
+        icon="file-text-o",   
+        title="Petitions",
+        content_type="petition",  
+    )
+
+@app.route("/petitions/explained")
+def petitions_explained():
+    return render_template("petitions/explained.html")
+
+@app.route("/petitions/<int:petition_id>")
+@app.route("/petitions/<int:petition_id>/")
+def petition_detail(petition_id):
+    petition = Petition.query.get_or_404(petition_id)
+    
+
+    # This is not good and should be reconsidered. 
+    # It currently uses the ids as set in admin. Not a good idea.
+
+    petition_stages = {
+        3: "2",  # House (NA or NCOP)
+        2: "3",  # Report published
+        1: "4",  # Petition finalised
+    }
+
+    if petition.house == "National Assembly":
+        house = "NA"
+    else:
+        house = "NCOP"
+
+    return render_template(
+        "petitions/detail.html",
+        petition=petition,
+        house=house,
+        petition_stages=petition_stages,
+        admin_edit_url=admin_url("petition", petition.id),
+        content_date=petition.date,
     )
 
 
